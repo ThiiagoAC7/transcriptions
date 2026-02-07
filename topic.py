@@ -35,6 +35,25 @@ def get_spacy_nlp():
     return _spacy_nlp
 
 
+# NLTK lazy-loading for stopwords
+_nltk_stopwords: Optional[Set[str]] = None
+
+
+def get_nltk_stopwords() -> Set[str]:
+    """Lazy-load NLTK English stopwords with auto-download if missing."""
+    global _nltk_stopwords
+    if _nltk_stopwords is None:
+        import nltk
+        from nltk.corpus import stopwords
+
+        try:
+            _nltk_stopwords = set(stopwords.words("english"))
+        except LookupError:
+            nltk.download("stopwords", quiet=True)
+            _nltk_stopwords = set(stopwords.words("english"))
+    return _nltk_stopwords
+
+
 @dataclass
 class VideoDocument:
     youtuber: str
@@ -59,21 +78,10 @@ class CleaningConfig:
     min_tokens: int = 3
 
 
-STOPWORDS = {
-    # português
-    "a", "o", "os", "as", "um", "uma", "de", "da", "do", "das", "dos",
-    "e", "é", "em", "no", "na", "nos", "nas", "por", "pra", "para",
-    "que", "se", "com", "como", "ao", "aos", "à", "às",
-    "eu", "tu", "ele", "ela", "nós", "vos", "eles", "elas", "você", "vocês",
-    "me", "te", "lhe", "nos", "lhes",
-    "isso", "isto", "aquilo", "aqui", "ali", "lá",
-    # inglês
-    "the", "a", "an", "and", "or", "but", "if", "then", "else",
-    "in", "on", "at", "for", "to", "of", "from", "by", "with",
-    "is", "are", "was", "were", "be", "been", "being",
-    "i", "you", "he", "she", "it", "we", "they",
-    "me", "him", "her", "them", "my", "your", "his", "their",
-}
+# NLTK stopwords - English only for now
+# Lazy-loaded via get_nltk_stopwords() function
+STOPWORDS_EN: Set[str] = set()
+STOPWORDS: Set[str] = set()  # Currently English only, extendable for multilingual
 
 SLANG_MAP = {
     # inglês
@@ -164,7 +172,7 @@ def expand_slang_and_acronyms(tokens: List[str], config: CleaningConfig) -> List
 
 
 def lemmatize_and_remove_stopwords(tokens: List[str], config: CleaningConfig) -> List[str]:
-    """Lemmatize tokens using spaCy and optionally remove stopwords."""
+    """Lemmatize tokens using spaCy and optionally remove stopwords using NLTK."""
     if not tokens:
         return []
 
@@ -172,12 +180,15 @@ def lemmatize_and_remove_stopwords(tokens: List[str], config: CleaningConfig) ->
     # Join tokens for spaCy processing, then split back to preserve tokenization
     doc = nlp(" ".join(tokens))
 
+    # Get NLTK stopwords if needed
+    stopwords_set = get_nltk_stopwords() if config.remove_stopwords else set()
+
     result: List[str] = []
     for token in doc:
         lemma = token.lemma_.lower().strip()
         if not lemma:
             continue
-        if config.remove_stopwords and token.is_stop:
+        if config.remove_stopwords and lemma in stopwords_set:
             continue
         result.append(lemma)
     return result
