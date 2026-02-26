@@ -1,19 +1,24 @@
+import argparse
+import gc
 import os
 import json
 
 import torch
 import yt_dlp
 from transformers import pipeline
+from dotenv import load_dotenv
 
 import random
 import time
 
+import whisperx
 
-def extract_transcriptions():
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+load_dotenv()
+
+
+def transcribe_old(audio_path: str, device: str) -> dict:
+    """Executa transcrição com transformers Whisper (sem diarização)."""
     torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-
-    print(f"Loading model on {device}...")
 
     pipe = pipeline(
         "automatic-speech-recognition",
@@ -24,6 +29,115 @@ def extract_transcriptions():
         chunk_length_s=30,
         batch_size=24,
     )
+
+    result = pipe(audio_path, return_timestamps=True, language="en")
+
+    del pipe
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    return result
+
+
+def transcribe_with_speakers(
+    audio_path: str,
+    hf_token: str,
+    device: str,
+    max_speakers: int = 5
+) -> dict:
+    """Transcreve áudio com WhisperX e diarização de speaker."""
+    model = whisperx.load_model("large-v3-turbo", device)
+
+    result = model.transcribe(audio_path, language="en")
+
+    model_a, metadata = whisperx.load_align_model(language_code="en", device=device)
+    result = whisperx.align(result["segments"], model_a, metadata, audio_path, device)
+
+    del model_a
+    torch.cuda.empty_cache()
+
+    diarize_model = whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
+    diarize_segments = diarize_model(audio_path, max_speakers=max_speakers)
+
+    result = whisperx.assign_word_speakers(diarize_segments, result)
+
+    del model, diarize_model
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    return result
+
+
+def format_plain_text(result: dict) -> str:
+    """Extrai texto puro do resultado da transcrição."""
+    return result.get("text", "").strip()
+
+
+def format_speakers_to_txt(result: dict) -> str:
+    """Converte resultado WhisperX para formato [SPEAKER_X] texto."""
+    lines = []
+    for segment in result.get("segments", []):
+        speaker = segment.get("speaker", "UNKNOWN")
+        text = segment.get("text", "").strip()
+        if text:
+            lines.append(f"[{speaker}] {text}")
+    return "\n".join(lines)
+
+
+def process_audio_file(
+    audio_path: str,
+    youtuber: str,
+    name: str,
+    device: str,
+    speakers: bool = True
+) -> None:
+    """Processa um arquivo de áudio e salva os resultados."""
+    txt_path = f"./text/{youtuber}/{name}.txt"
+    json_path = f"./text/{youtuber}/{name}.json"
+
+    if speakers:
+        hf_token = os.getenv("HF_TOKEN")
+        if not hf_token:
+            print(f"[SKIP] HF_TOKEN not set, falling back to old pipeline")
+            speakers = False
+        elif os.path.exists(json_path):
+            print(f"[SKIP] {youtuber}/{name}.json already exists.")
+            return
+
+    if speakers:
+        try:
+            result = transcribe_with_speakers(audio_path, hf_token, device)
+
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+
+            txt_content = format_speakers_to_txt(result)
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(txt_content)
+
+        except Exception as e:
+            print(f"Speaker diarization failed: {e}")
+            print(f"[FALLBACK] Retrying with old pipeline...")
+            speakers = False
+
+    if not speakers:
+        if os.path.exists(txt_path):
+            print(f"[SKIP] {youtuber}/{name}.txt already exists.")
+            return
+
+        result = transcribe_old(audio_path, device)
+        txt_content = format_plain_text(result)
+
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(txt_content)
+
+
+def extract_transcriptions(speakers: bool = True) -> None:
+    """Extrai transcrições de todos os áudios em ./downloads."""
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    print(f"Using device: {device}")
+    print(f"Speaker diarization: {'enabled' if speakers else 'disabled'}")
 
     os.makedirs("./text/", exist_ok=True)
 
@@ -40,22 +154,11 @@ def extract_transcriptions():
             print(f"Directory {audio_dir} does not exist.")
 
         for i, audio_file in enumerate(audios):
-            print(f"transcribing audios {i}/{len(audios)} of youtuber {y}...")
+            print(f"[{i+1}/{len(audios)}] Processing {y}/{audio_file}...")
             file_path = os.path.join(audio_dir, audio_file)
-            _name = os.path.splitext(audio_file)[0]
+            name = os.path.splitext(audio_file)[0]
 
-            text_path = f"./text/{y}/{_name}.txt"
-            if not os.path.exists(text_path):
-                result = pipe(file_path,
-                              return_timestamps=True,
-                              language="en",
-                              )
-
-                with open(f"./text/{y}/{_name}.txt", "w", encoding="utf-8") as f:
-                    f.write(result["text"])
-            else:
-                print(f"[SKIP] ./text/{y}/{_name} already exists.")
-
+            process_audio_file(file_path, y, name, device, speakers)
 
 
 def collect_video_ids(base_dir="transcriptions/videos"):
@@ -78,8 +181,8 @@ def collect_video_ids(base_dir="transcriptions/videos"):
                     selected = data.get("selected_videos", [])
                     video_ids[os.path.basename(root)].extend(selected)
                     print(f"Loaded {len(selected)} videos from {os.path.basename(root)}")
-    
-    return video_ids 
+
+    return video_ids
 
 
 def download_videos(video_ids={}):
@@ -112,7 +215,7 @@ def download_videos(video_ids={}):
         'retry_sleep': 20,
         'sleep_interval': 10,
         'max_sleep_interval': 30,
-        'source_address': '0.0.0.0', 
+        'source_address': '0.0.0.0',
         'http_headers': {
             'Referer': 'https://www.google.com/',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -121,12 +224,12 @@ def download_videos(video_ids={}):
 
     for ytbr, vids in video_ids.items():
         output_dir = os.path.join('transcriptions', 'downloads', ytbr)
-        
+
         urls_to_download = []
-        
+
         for vid in vids:
             expected_path = os.path.join(output_dir, f"{vid}.wav")
-            
+
             if os.path.exists(expected_path):
                 print(f"[SKIP] {ytbr}/{vid} already exists.")
             else:
@@ -134,7 +237,7 @@ def download_videos(video_ids={}):
 
         if urls_to_download:
             print(f"Downloading {len(urls_to_download)} new videos for {ytbr}...")
-            
+
             current_opts = base_opts.copy()
             current_opts['outtmpl'] = f'{output_dir}/%(id)s.%(ext)s'
 
@@ -148,9 +251,22 @@ def download_videos(video_ids={}):
 
 
 def main():
-    # ids = collect_video_ids()
-    # download_videos(ids)
-    extract_transcriptions()
+    parser = argparse.ArgumentParser(description="YouTube video transcription pipeline")
+    parser.add_argument(
+        "--speakers",
+        action="store_true",
+        default=True,
+        help="Enable speaker diarization (default: True)"
+    )
+    parser.add_argument(
+        "--no-speakers",
+        action="store_false",
+        dest="speakers",
+        help="Disable speaker diarization"
+    )
+    args = parser.parse_args()
+
+    extract_transcriptions(speakers=args.speakers)
 
 
 if __name__ == "__main__":
