@@ -5,3 +5,4 @@ videos/
 .rcloneignore
 AGENTS.md
 Makefile
+results/
