@@ -141,6 +141,7 @@ def extract_transcriptions(speakers: bool = True) -> None:
 
     os.makedirs("./text/", exist_ok=True)
 
+    all_video_ids = collect_video_ids()
     ytbrs = os.listdir('./downloads')
 
     for y in ytbrs:
@@ -152,6 +153,15 @@ def extract_transcriptions(speakers: bool = True) -> None:
         else:
             audios = []
             print(f"Directory {audio_dir} does not exist.")
+            if y in all_video_ids and all_video_ids.get(y):
+                print(f"Downloading videos for {y}...")
+                download_videos({y: all_video_ids[y]})
+                if os.path.exists(audio_dir):
+                    audios = [f for f in os.listdir(audio_dir) if f.endswith(('.wav'))]
+                else:
+                    print(f"No videos downloaded for {y}")
+            else:
+                print(f"No video IDs found for {y}")
 
         for i, audio_file in enumerate(audios):
             print(f"[{i+1}/{len(audios)}] Processing {y}/{audio_file}...")
@@ -161,7 +171,7 @@ def extract_transcriptions(speakers: bool = True) -> None:
             process_audio_file(file_path, y, name, device, speakers)
 
 
-def collect_video_ids(base_dir="transcriptions/videos"):
+def collect_video_ids(base_dir="videos"):
     """
     Traverses the base_dir to find 'most_viewed_videos_per_month.json' files
     and collects all video IDs from the 'selected_videos' field.
@@ -223,7 +233,7 @@ def download_videos(video_ids={}):
     }
 
     for ytbr, vids in video_ids.items():
-        output_dir = os.path.join('transcriptions', 'downloads', ytbr)
+        output_dir = os.path.join('downloads', ytbr)
 
         urls_to_download = []
 
@@ -264,9 +274,18 @@ def main():
         dest="speakers",
         help="Disable speaker diarization"
     )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Only download videos, skip transcription"
+    )
     args = parser.parse_args()
 
-    extract_transcriptions(speakers=args.speakers)
+    if args.download:
+        video_ids = collect_video_ids()
+        download_videos(video_ids)
+    else:
+        extract_transcriptions(speakers=args.speakers)
 
 
 if __name__ == "__main__":

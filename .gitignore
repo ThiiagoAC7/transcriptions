@@ -6,3 +6,5 @@ videos/
 AGENTS.md
 Makefile
 results/
+.env
+*.log
