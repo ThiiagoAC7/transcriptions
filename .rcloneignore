@@ -8,7 +8,6 @@ Makefile
 pixi.lock
 pixi.toml
 debug/
-downloads/
 *.ipynb
 text/
 *.txt
