@@ -1,17 +1,19 @@
+from __future__ import annotations
+
 import argparse
 import gc
-import os
 import json
-
-import torch
-import yt_dlp
-from transformers import pipeline
-from dotenv import load_dotenv
-
+import os
 import random
 import time
+from typing import List
 
+import torch
 import whisperx
+import yt_dlp
+from dotenv import load_dotenv
+from transformers import pipeline
+from whisperx.diarize import DiarizationPipeline
 
 load_dotenv()
 
@@ -43,21 +45,35 @@ def transcribe_with_speakers(
     audio_path: str,
     hf_token: str,
     device: str,
-    max_speakers: int = 5
+    max_speakers: int = 5,
+    compute_type: str = "float16",
+    batch_size: int = 16,
 ) -> dict:
     """Transcreve áudio com WhisperX e diarização de speaker."""
-    model = whisperx.load_model("large-v3-turbo", device)
+    model = whisperx.load_model("large-v3-turbo", device, compute_type=compute_type)
 
-    result = model.transcribe(audio_path, language="en")
+    audio = whisperx.load_audio(audio_path)
 
-    model_a, metadata = whisperx.load_align_model(language_code="en", device=device)
-    result = whisperx.align(result["segments"], model_a, metadata, audio_path, device)
+    result = model.transcribe(audio, batch_size=batch_size)
+
+    model_a, metadata = whisperx.load_align_model(
+        language_code=result["language"], device=device
+    )
+    result = whisperx.align(
+        result["segments"],
+        model_a,
+        metadata,
+        audio,
+        device,
+        return_char_alignments=False,
+    )
 
     del model_a
+    gc.collect()
     torch.cuda.empty_cache()
 
-    diarize_model = whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
-    diarize_segments = diarize_model(audio_path, max_speakers=max_speakers)
+    diarize_model = DiarizationPipeline(token=hf_token, device=device)
+    diarize_segments = diarize_model(audio, max_speakers=max_speakers)
 
     result = whisperx.assign_word_speakers(diarize_segments, result)
 
@@ -85,11 +101,7 @@ def format_speakers_to_txt(result: dict) -> str:
 
 
 def process_audio_file(
-    audio_path: str,
-    youtuber: str,
-    name: str,
-    device: str,
-    speakers: bool = True
+    audio_path: str, youtuber: str, name: str, device: str, speakers: bool = True
 ) -> None:
     """Processa um arquivo de áudio e salva os resultados."""
     txt_path = f"./text/{youtuber}/{name}.txt"
@@ -132,9 +144,11 @@ def process_audio_file(
             f.write(txt_content)
 
 
-def extract_transcriptions(speakers: bool = True) -> None:
+def extract_transcriptions(
+    speakers: bool = True, youtubers: List[str] | None = None
+) -> None:
     """Extrai transcrições de todos os áudios em ./downloads."""
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print(f"Using device: {device}")
     print(f"Speaker diarization: {'enabled' if speakers else 'disabled'}")
@@ -142,14 +156,15 @@ def extract_transcriptions(speakers: bool = True) -> None:
     os.makedirs("./text/", exist_ok=True)
 
     all_video_ids = collect_video_ids()
-    ytbrs = os.listdir('./downloads')
+    all_ytbrs = os.listdir("./downloads")
+    ytbrs = all_ytbrs if not youtubers else [y for y in youtubers if y in all_ytbrs]
 
     for y in ytbrs:
         audio_dir = f"./downloads/{y}"
         os.makedirs(f"./text/{y}", exist_ok=True)
 
         if os.path.exists(audio_dir):
-            audios = [f for f in os.listdir(audio_dir) if f.endswith(('.wav'))]
+            audios = [f for f in os.listdir(audio_dir) if f.endswith((".wav"))]
         else:
             audios = []
             print(f"Directory {audio_dir} does not exist.")
@@ -157,14 +172,14 @@ def extract_transcriptions(speakers: bool = True) -> None:
                 print(f"Downloading videos for {y}...")
                 download_videos({y: all_video_ids[y]})
                 if os.path.exists(audio_dir):
-                    audios = [f for f in os.listdir(audio_dir) if f.endswith(('.wav'))]
+                    audios = [f for f in os.listdir(audio_dir) if f.endswith((".wav"))]
                 else:
                     print(f"No videos downloaded for {y}")
             else:
                 print(f"No video IDs found for {y}")
 
         for i, audio_file in enumerate(audios):
-            print(f"[{i+1}/{len(audios)}] Processing {y}/{audio_file}...")
+            print(f"[{i + 1}/{len(audios)}] Processing {y}/{audio_file}...")
             file_path = os.path.join(audio_dir, audio_file)
             name = os.path.splitext(audio_file)[0]
 
@@ -186,11 +201,13 @@ def collect_video_ids(base_dir="videos"):
             if file == "most_viewed_videos_per_month.json":
                 file_path = os.path.join(root, file)
                 video_ids[os.path.basename(root)] = []
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     selected = data.get("selected_videos", [])
                     video_ids[os.path.basename(root)].extend(selected)
-                    print(f"Loaded {len(selected)} videos from {os.path.basename(root)}")
+                    print(
+                        f"Loaded {len(selected)} videos from {os.path.basename(root)}"
+                    )
 
     return video_ids
 
@@ -207,7 +224,9 @@ def download_videos(video_ids={}):
         print("no video IDs provided.")
         return
 
-    user_agent = 'Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0'
+    user_agent = (
+        "Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0"
+    )
 
     base_opts = {
         'format': 'bestaudio/best',
@@ -219,7 +238,7 @@ def download_videos(video_ids={}):
         }],
         # 'cookies_from_browser': 'firefox',
         'cookiefile' : 'cookies.txt',
-        'user_agent': user_agent,
+        # 'user_agent': user_agent,
         'retries': 10,
         'fragment_retries': 10,
         'retry_sleep': 20,
@@ -230,10 +249,34 @@ def download_videos(video_ids={}):
             'Referer': 'https://www.google.com/',
             'Accept-Language': 'en-US,en;q=0.9',
         },
+        "js_runtimes": {"node": {}},
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["web"],
+            }
+        },
     }
+    # base_opts = {
+    #     "format": "bestaudio/best",
+    #     "quiet": False,
+    #     "no_warnings": False,
+    #     "postprocessors": [
+    #         {
+    #             "key": "FFmpegExtractAudio",
+    #             "preferredcodec": "wav",
+    #         }
+    #     ],
+    #     # "cookies_from_browser": "firefox",
+    #     "js_runtimes": {"node": {}},
+    #     "extractor_args": {
+    #         "youtube": {
+    #             "player_client": ["web"],
+    #         }
+    #     },
+    # }
 
     for ytbr, vids in video_ids.items():
-        output_dir = os.path.join('downloads', ytbr)
+        output_dir = os.path.join("downloads", ytbr)
 
         urls_to_download = []
 
@@ -249,7 +292,7 @@ def download_videos(video_ids={}):
             print(f"Downloading {len(urls_to_download)} new videos for {ytbr}...")
 
             current_opts = base_opts.copy()
-            current_opts['outtmpl'] = f'{output_dir}/%(id)s.%(ext)s'
+            current_opts["outtmpl"] = f"{output_dir}/%(id)s.%(ext)s"
 
             with yt_dlp.YoutubeDL(current_opts) as ydl:
                 ydl.download(urls_to_download)
@@ -266,18 +309,24 @@ def main():
         "--speakers",
         action="store_true",
         default=True,
-        help="Enable speaker diarization (default: True)"
+        help="Enable speaker diarization (default: True)",
     )
     parser.add_argument(
         "--no-speakers",
         action="store_false",
         dest="speakers",
-        help="Disable speaker diarization"
+        help="Disable speaker diarization",
     )
     parser.add_argument(
         "--download",
         action="store_true",
-        help="Only download videos, skip transcription"
+        help="Only download videos, skip transcription",
+    )
+    parser.add_argument(
+        "--youtubers",
+        nargs="*",
+        default=[],
+        help="Filter to specific youtubers (default: all)",
     )
     args = parser.parse_args()
 
@@ -285,7 +334,7 @@ def main():
         video_ids = collect_video_ids()
         download_videos(video_ids)
     else:
-        extract_transcriptions(speakers=args.speakers)
+        extract_transcriptions(speakers=args.speakers, youtubers=args.youtubers)
 
 
 if __name__ == "__main__":

@@ -8,3 +8,10 @@ Makefile
 results/
 .env
 *.log
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+.gitattributes
+cookies.txt
+
+downloads/

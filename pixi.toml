@@ -1,0 +1,17 @@
+[workspace]
+channels = ["conda-forge"]
+name = "transcriptions"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+download = { cmd = ["python", "transcript.py", "--download"], description = "download videos ..."}
+
+[dependencies]
+python = "3.12.*"
+
+[pypi-dependencies]
+whisperx = ">=3.8.1, <4"
+yt-dlp = ">=2026.2.21, <2027"
+dotenv = ">=0.9.9, <0.10"
+yt-dlp-ejs = ">=0.5.0, <0.6"
