@@ -1,0 +1,14 @@
+__pycache__/
+*.md
+.rcloneignore
+Makefile
+.pixi/
+.gitignore
+.gitattributes
+pixi.lock
+pixi.toml
+debug/
+downloads/
+*.ipynb
+text/
+*.txt

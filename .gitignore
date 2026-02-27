@@ -2,9 +2,6 @@ __pycache__/
 comments/
 text/
 videos/
-.rcloneignore
-AGENTS.md
-Makefile
 results/
 .env
 *.log
