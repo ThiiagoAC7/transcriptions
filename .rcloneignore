@@ -9,5 +9,6 @@ pixi.lock
 pixi.toml
 debug/
 *.ipynb
-text/
-*.txt
+text_old/
+cookies.txt
+downloads/
