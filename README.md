@@ -25,3 +25,11 @@ python transcript.py [--no-speakers] [--youtubers NAME ...]
 ## TODO:
 
 - [ ] download logic: multiple inputs (json, .txt, args)
+
+## EXTRAS
+
+rclone config with [just](https://github.com/casey/just).  On `justfile`, change REMOTE and LOCAL paths.
+it ignores everything from .gitignore, .git and .rcloneignore. 
+
+I mostly use `push` and `pull` commands, to pull from google drive and push changes, while working 
+with google colab notebooks.
