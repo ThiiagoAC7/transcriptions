@@ -1,103 +1,22 @@
 from __future__ import annotations
 
 import argparse
-import gc
 import json
 import os
-import random
-import time
 from typing import List
 
 import torch
-import whisperx
-import yt_dlp
 from dotenv import load_dotenv
-from transformers import pipeline
-from whisperx.diarize import DiarizationPipeline
+
+from download import collect_video_ids, download_videos
+from speech import (
+    format_plain_text,
+    format_speakers_to_txt,
+    transcribe_old,
+    transcribe_with_speakers,
+)
 
 load_dotenv()
-
-
-def transcribe_old(audio_path: str, device: str) -> dict:
-    """Executa transcrição com transformers Whisper (sem diarização)."""
-    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-
-    pipe = pipeline(
-        "automatic-speech-recognition",
-        model="openai/whisper-large-v3-turbo",
-        dtype=torch_dtype,
-        device=device,
-        model_kwargs={"attn_implementation": "sdpa"},
-        chunk_length_s=30,
-        batch_size=24,
-    )
-
-    result = pipe(audio_path, return_timestamps=True, language="en")
-
-    del pipe
-    torch.cuda.empty_cache()
-    gc.collect()
-
-    return result
-
-
-def transcribe_with_speakers(
-    audio_path: str,
-    hf_token: str,
-    device: str,
-    max_speakers: int = 5,
-    compute_type: str = "float16",
-    batch_size: int = 16,
-) -> dict:
-    """Transcreve áudio com WhisperX e diarização de speaker."""
-    model = whisperx.load_model("large-v3-turbo", device, compute_type=compute_type)
-
-    audio = whisperx.load_audio(audio_path)
-
-    result = model.transcribe(audio, batch_size=batch_size)
-
-    model_a, metadata = whisperx.load_align_model(
-        language_code=result["language"], device=device
-    )
-    result = whisperx.align(
-        result["segments"],
-        model_a,
-        metadata,
-        audio,
-        device,
-        return_char_alignments=False,
-    )
-
-    del model_a
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    diarize_model = DiarizationPipeline(token=hf_token, device=device)
-    diarize_segments = diarize_model(audio, max_speakers=max_speakers)
-
-    result = whisperx.assign_word_speakers(diarize_segments, result)
-
-    del model, diarize_model
-    torch.cuda.empty_cache()
-    gc.collect()
-
-    return result
-
-
-def format_plain_text(result: dict) -> str:
-    """Extrai texto puro do resultado da transcrição."""
-    return result.get("text", "").strip()
-
-
-def format_speakers_to_txt(result: dict) -> str:
-    """Converte resultado WhisperX para formato [SPEAKER_X] texto."""
-    lines = []
-    for segment in result.get("segments", []):
-        speaker = segment.get("speaker", "UNKNOWN")
-        text = segment.get("text", "").strip()
-        if text:
-            lines.append(f"[{speaker}] {text}")
-    return "\n".join(lines)
 
 
 def process_audio_file(
@@ -186,123 +105,6 @@ def extract_transcriptions(
             process_audio_file(file_path, y, name, device, speakers)
 
 
-def collect_video_ids(base_dir="videos"):
-    """
-    Traverses the base_dir to find 'most_viewed_videos_per_month.json' files
-    and collects all video IDs from the 'selected_videos' field.
-    """
-    video_ids = {}
-    if not os.path.exists(base_dir):
-        print(f"Directory {base_dir} not found.")
-        return []
-
-    for root, _, files in os.walk(base_dir):
-        for file in files:
-            if file == "most_viewed_videos_per_month.json":
-                file_path = os.path.join(root, file)
-                video_ids[os.path.basename(root)] = []
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    selected = data.get("selected_videos", [])
-                    video_ids[os.path.basename(root)].extend(selected)
-                    print(
-                        f"Loaded {len(selected)} videos from {os.path.basename(root)}"
-                    )
-
-    return video_ids
-
-
-def download_videos(video_ids={}):
-    """
-    downloads audio from specific video_ids
-    using .wav for best quality
-
-    params:
-        - video_ids: list of video ids as they appear in the video url
-    """
-    if not video_ids:
-        print("no video IDs provided.")
-        return
-
-    user_agent = (
-        "Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0"
-    )
-
-    base_opts = {
-        'format': 'bestaudio/best',
-        'quiet': False,
-        'no_warnings': True,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'wav',
-        }],
-        # 'cookies_from_browser': 'firefox',
-        'cookiefile' : 'cookies.txt',
-        # 'user_agent': user_agent,
-        'retries': 10,
-        'fragment_retries': 10,
-        'retry_sleep': 20,
-        'sleep_interval': 10,
-        'max_sleep_interval': 30,
-        'source_address': '0.0.0.0',
-        'http_headers': {
-            'Referer': 'https://www.google.com/',
-            'Accept-Language': 'en-US,en;q=0.9',
-        },
-        "js_runtimes": {"node": {}},
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["web"],
-            }
-        },
-    }
-    # base_opts = {
-    #     "format": "bestaudio/best",
-    #     "quiet": False,
-    #     "no_warnings": False,
-    #     "postprocessors": [
-    #         {
-    #             "key": "FFmpegExtractAudio",
-    #             "preferredcodec": "wav",
-    #         }
-    #     ],
-    #     # "cookies_from_browser": "firefox",
-    #     "js_runtimes": {"node": {}},
-    #     "extractor_args": {
-    #         "youtube": {
-    #             "player_client": ["web"],
-    #         }
-    #     },
-    # }
-
-    for ytbr, vids in video_ids.items():
-        output_dir = os.path.join("downloads", ytbr)
-
-        urls_to_download = []
-
-        for vid in vids:
-            expected_path = os.path.join(output_dir, f"{vid}.wav")
-
-            if os.path.exists(expected_path):
-                print(f"[SKIP] {ytbr}/{vid} already exists.")
-            else:
-                urls_to_download.append(f"https://www.youtube.com/watch?v={vid}")
-
-        if urls_to_download:
-            print(f"Downloading {len(urls_to_download)} new videos for {ytbr}...")
-
-            current_opts = base_opts.copy()
-            current_opts["outtmpl"] = f"{output_dir}/%(id)s.%(ext)s"
-
-            with yt_dlp.YoutubeDL(current_opts) as ydl:
-                ydl.download(urls_to_download)
-
-            print("Batch finished. Resting for to cool down...")
-            time.sleep(random.randint(30, 60))
-        else:
-            print(f"All videos for {ytbr} are up to date.")
-
-
 def main():
     parser = argparse.ArgumentParser(description="YouTube video transcription pipeline")
     parser.add_argument(
@@ -318,11 +120,6 @@ def main():
         help="Disable speaker diarization",
     )
     parser.add_argument(
-        "--download",
-        action="store_true",
-        help="Only download videos, skip transcription",
-    )
-    parser.add_argument(
         "--youtubers",
         nargs="*",
         default=[],
@@ -330,11 +127,7 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.download:
-        video_ids = collect_video_ids()
-        download_videos(video_ids)
-    else:
-        extract_transcriptions(speakers=args.speakers, youtubers=args.youtubers)
+    extract_transcriptions(speakers=args.speakers, youtubers=args.youtubers)
 
 
 if __name__ == "__main__":
