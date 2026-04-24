@@ -2,6 +2,7 @@ __pycache__/
 *.md
 .rcloneignore
 Makefile
+justfile
 .pixi/
 .gitignore
 .gitattributes
@@ -9,6 +10,7 @@ pixi.lock
 pixi.toml
 debug/
 *.ipynb
+*.log
 text_old/
 cookies.txt
 downloads/

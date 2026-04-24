@@ -20,11 +20,27 @@ load_dotenv()
 
 
 def process_audio_file(
-    audio_path: str, youtuber: str, name: str, device: str, speakers: bool = True
+    audio_path: str,
+    youtuber: str,
+    name: str,
+    device: str,
+    output_dir: str,
+    speakers: bool = True,
 ) -> None:
-    """Processa um arquivo de áudio e salva os resultados."""
-    txt_path = f"./text/{youtuber}/{name}.txt"
-    json_path = f"./text/{youtuber}/{name}.json"
+    """
+    Process an audio file and save transcription results.
+
+    params:
+    - audio_path: path to the audio file
+    - youtuber: name of the youtuber
+    - name: base filename for output
+    - device: torch device to use for inference
+    - output_dir: directory to save transcription files
+    - speakers: enable speaker diarization
+
+    """
+    txt_path = os.path.join(output_dir, youtuber, f"{name}.txt")
+    json_path = os.path.join(output_dir, youtuber, f"{name}.json")
 
     if speakers:
         hf_token = os.getenv("HF_TOKEN")
@@ -64,23 +80,35 @@ def process_audio_file(
 
 
 def extract_transcriptions(
-    speakers: bool = True, youtubers: List[str] | None = None
+    input_dir: str,
+    output_dir: str,
+    speakers: bool = True,
+    youtubers: List[str] | None = None,
 ) -> None:
-    """Extrai transcrições de todos os áudios em ./downloads."""
+    """
+    Extract transcriptions from all audio files in the input directory.
+
+    params:
+    - input_dir: directory containing audio files
+    - output_dir: directory to save transcription files
+    - speakers: enable speaker diarization
+    - youtubers: optional list of youtubers to filter
+
+    """
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print(f"Using device: {device}")
     print(f"Speaker diarization: {'enabled' if speakers else 'disabled'}")
 
-    os.makedirs("./text/", exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
-    all_video_ids = collect_video_ids()
-    all_ytbrs = os.listdir("./downloads")
+    all_video_ids = collect_video_ids("videos")
+    all_ytbrs = os.listdir(input_dir)
     ytbrs = all_ytbrs if not youtubers else [y for y in youtubers if y in all_ytbrs]
 
     for y in ytbrs:
-        audio_dir = f"./downloads/{y}"
-        os.makedirs(f"./text/{y}", exist_ok=True)
+        audio_dir = os.path.join(input_dir, y)
+        os.makedirs(os.path.join(output_dir, y), exist_ok=True)
 
         if os.path.exists(audio_dir):
             audios = [f for f in os.listdir(audio_dir) if f.endswith((".wav"))]
@@ -89,7 +117,7 @@ def extract_transcriptions(
             print(f"Directory {audio_dir} does not exist.")
             if y in all_video_ids and all_video_ids.get(y):
                 print(f"Downloading videos for {y}...")
-                download_videos({y: all_video_ids[y]})
+                download_videos({y: all_video_ids[y]}, input_dir)
                 if os.path.exists(audio_dir):
                     audios = [f for f in os.listdir(audio_dir) if f.endswith((".wav"))]
                 else:
@@ -102,11 +130,21 @@ def extract_transcriptions(
             file_path = os.path.join(audio_dir, audio_file)
             name = os.path.splitext(audio_file)[0]
 
-            process_audio_file(file_path, y, name, device, speakers)
+            process_audio_file(file_path, y, name, device, output_dir, speakers)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="YouTube video transcription pipeline")
+    parser.add_argument(
+        "--input-dir",
+        default="downloads",
+        help="Directory containing audio files (default: downloads)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="text",
+        help="Directory to save transcriptions (default: text)",
+    )
     parser.add_argument(
         "--speakers",
         action="store_true",
@@ -127,7 +165,12 @@ def main():
     )
     args = parser.parse_args()
 
-    extract_transcriptions(speakers=args.speakers, youtubers=args.youtubers)
+    extract_transcriptions(
+        input_dir=args.input_dir,
+        output_dir=args.output_dir,
+        speakers=args.speakers,
+        youtubers=args.youtubers,
+    )
 
 
 if __name__ == "__main__":
