@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import List
+from typing import Dict, List
 
 import torch
 from dotenv import load_dotenv
@@ -17,6 +17,8 @@ from speech import (
 )
 
 load_dotenv()
+
+VideoIdMap = Dict[str, List[str]]
 
 
 def process_audio_file(
@@ -102,7 +104,7 @@ def extract_transcriptions(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    all_video_ids = collect_video_ids("videos")
+    all_video_ids = collect_video_ids(input_dir)
     all_ytbrs = os.listdir(input_dir)
     ytbrs = all_ytbrs if not youtubers else [y for y in youtubers if y in all_ytbrs]
 

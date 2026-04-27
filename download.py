@@ -9,8 +9,10 @@ from typing import Dict, List
 
 import yt_dlp
 
+VideoIdMap = Dict[str, List[str]]
 
-def collect_video_ids(base_dir: str) -> Dict[str, List[str]]:
+
+def collect_video_ids(base_dir: str) -> VideoIdMap:
     """
     Traverse base_dir to find 'most_viewed_videos_per_month.json' files
     and collect all video IDs from the 'selected_videos' field.
@@ -21,7 +23,7 @@ def collect_video_ids(base_dir: str) -> Dict[str, List[str]]:
     returns:
     - dict mapping youtuber name to list of video IDs
     """
-    video_ids: Dict[str, List[str]] = {}
+    video_ids: VideoIdMap = {}
     if not os.path.exists(base_dir):
         print(f"Directory {base_dir} not found.")
         return video_ids
@@ -41,7 +43,7 @@ def collect_video_ids(base_dir: str) -> Dict[str, List[str]]:
     return video_ids
 
 
-def download_videos(video_ids: Dict[str, List[str]], output_dir: str) -> None:
+def download_videos(video_ids: VideoIdMap, output_dir: str) -> None:
     """
     Download audio from specific video IDs using .wav for better quality.
 
