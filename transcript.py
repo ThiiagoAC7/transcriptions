@@ -20,6 +20,15 @@ load_dotenv()
 
 VideoIdMap = Dict[str, List[str]]
 
+BATCH_SIZE = 5
+
+
+def _delete_audio_files(audio_dir: str, filenames: List[str]) -> None:
+    for filename in filenames:
+        path = os.path.join(audio_dir, filename)
+        if os.path.exists(path):
+            os.remove(path)
+
 
 def process_audio_file(
     audio_path: str,
@@ -83,12 +92,15 @@ def process_audio_file(
 
 def extract_transcriptions(
     input_dir: str,
+    videos_dir: str,
     output_dir: str,
     speakers: bool = True,
     youtubers: List[str] | None = None,
 ) -> None:
     """
     Extract transcriptions from all audio files in the input directory.
+    Processes in batches: download up to 5 videos, transcribe them,
+    then delete the raw audio files to save disk space.
 
     params:
     - input_dir: directory containing audio files
@@ -104,35 +116,76 @@ def extract_transcriptions(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    all_video_ids = collect_video_ids(input_dir)
+    all_video_ids = collect_video_ids(videos_dir)
     all_ytbrs = os.listdir(input_dir)
     ytbrs = all_ytbrs if not youtubers else [y for y in youtubers if y in all_ytbrs]
 
     for y in ytbrs:
         audio_dir = os.path.join(input_dir, y)
-        os.makedirs(os.path.join(output_dir, y), exist_ok=True)
+        output_ytbr_dir = os.path.join(output_dir, y)
+        os.makedirs(output_ytbr_dir, exist_ok=True)
 
+        # process any already-downloaded audio files first
         if os.path.exists(audio_dir):
-            audios = [f for f in os.listdir(audio_dir) if f.endswith((".wav"))]
+            existing_audios = [f for f in os.listdir(audio_dir) if f.endswith(".wav")]
         else:
-            audios = []
-            print(f"Directory {audio_dir} does not exist.")
-            if y in all_video_ids and all_video_ids.get(y):
-                print(f"Downloading videos for {y}...")
-                download_videos({y: all_video_ids[y]}, input_dir)
-                if os.path.exists(audio_dir):
-                    audios = [f for f in os.listdir(audio_dir) if f.endswith((".wav"))]
+            existing_audios = []
+            os.makedirs(audio_dir, exist_ok=True)
+
+        if existing_audios:
+            print(f"found {len(existing_audios)} existing audio files for {y}")
+            for i, audio_file in enumerate(existing_audios):
+                print(f"[{i + 1}/{len(existing_audios)}] processing {y}/{audio_file}...")
+                file_path = os.path.join(audio_dir, audio_file)
+                name = os.path.splitext(audio_file)[0]
+                process_audio_file(file_path, y, name, device, output_dir, speakers)
+
+            _delete_audio_files(audio_dir, existing_audios)
+            print(f"deleted {len(existing_audios)} processed audio files for {y}")
+
+        # determine remaining video IDs that need transcription
+        video_ids_for_y = all_video_ids.get(y, [])
+        if not video_ids_for_y:
+            print(f"No video IDs found for {y}")
+            continue
+
+        remaining_ids = [
+            vid for vid in video_ids_for_y
+            if not os.path.exists(os.path.join(output_ytbr_dir, f"{vid}.txt"))
+            and not os.path.exists(os.path.join(output_ytbr_dir, f"{vid}.json"))
+        ]
+
+        if not remaining_ids:
+            print(f"all videos already transcribed for {y}")
+            continue
+
+        total_batches = (len(remaining_ids) + BATCH_SIZE - 1) // BATCH_SIZE
+        print(f"{len(remaining_ids)} videos remaining for {y} ({total_batches} batches)")
+
+        for batch_start in range(0, len(remaining_ids), BATCH_SIZE):
+            batch_ids = remaining_ids[batch_start:batch_start + BATCH_SIZE]
+            batch_num = batch_start // BATCH_SIZE + 1
+
+            print(f"\n--- batch {batch_num}/{total_batches} for {y}: {len(batch_ids)} videos ---")
+
+            download_videos({y: batch_ids}, input_dir)
+
+            # process each downloaded audio file in the batch
+            processed_files: List[str] = []
+            for vid in batch_ids:
+                audio_path = os.path.join(audio_dir, f"{vid}.wav")
+                if os.path.exists(audio_path):
+                    print(f"[{len(processed_files) + 1}/{len(batch_ids)}] Processing {y}/{vid}...")
+                    process_audio_file(audio_path, y, vid, device, output_dir, speakers)
+                    processed_files.append(f"{vid}.wav")
                 else:
-                    print(f"No videos downloaded for {y}")
-            else:
-                print(f"No video IDs found for {y}")
+                    print(f"[WARN] Expected audio file not found: {audio_path}")
 
-        for i, audio_file in enumerate(audios):
-            print(f"[{i + 1}/{len(audios)}] Processing {y}/{audio_file}...")
-            file_path = os.path.join(audio_dir, audio_file)
-            name = os.path.splitext(audio_file)[0]
+            # delete raw audio files to free disk space
+            _delete_audio_files(audio_dir, processed_files)
+            print(f"Batch {batch_num} complete. Deleted {len(processed_files)} audio files.")
 
-            process_audio_file(file_path, y, name, device, output_dir, speakers)
+        print(f"\nAll batches complete for {y}")
 
 
 def main() -> None:
@@ -146,6 +199,11 @@ def main() -> None:
         "--output-dir",
         default="text",
         help="Directory to save transcriptions (default: text)",
+    )
+    parser.add_argument(
+        "--videos-dir",
+        default="videos",
+        help="Directory containing selected videos (default: videos)",
     )
     parser.add_argument(
         "--speakers",
@@ -170,6 +228,7 @@ def main() -> None:
     extract_transcriptions(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
+        videos_dir=args.videos_dir,
         speakers=args.speakers,
         youtubers=args.youtubers,
     )

@@ -6,11 +6,10 @@ justfile
 .pixi/
 .gitignore
 .gitattributes
-pixi.lock
-pixi.toml
 debug/
 *.ipynb
 *.log
 text_old/
 cookies.txt
 downloads/
+.ruff_cache/
