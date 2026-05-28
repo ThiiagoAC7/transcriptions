@@ -27,6 +27,13 @@ force-push:
 pull:
     rclone copy {{remote}} {{local}} {{flags}}
 
+# pull specific directories from google drive to local
+pull-dirs +dirs:
+    @for dir in {{dirs}}; do \
+        echo "pulling $dir..."; \
+        rclone copy "{{remote}}/$dir" "{{local}}/$dir" {{flags}}; \
+    done
+
 # show differences (like git status)
 status:
     rclone check {{local}} {{remote}} --one-way --exclude-from {{ignore_file}} --exclude ".git/**"
