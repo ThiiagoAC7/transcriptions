@@ -105,6 +105,9 @@ def download_videos(video_ids: VideoIdMap, output_dir: str) -> None:
         print("no video IDs provided.")
         return
 
+    # todo: this needs to be fixed/better organized.
+    # had some issues with js runtime, cookies, videos being empty, ...
+    # the current config appears to be stable, but anything can happen
     base_opts = {
         "format": "bestaudio/best",
         "quiet": False,
@@ -129,11 +132,12 @@ def download_videos(video_ids: VideoIdMap, output_dir: str) -> None:
             "Accept-Language": "en-US,en;q=0.9",
         },
         "js_runtimes": {"node": {}},
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["web", "android", "ios", "mweb"], # fallbacks if web fails
-            }
-        },
+        "remote_components": {"ejs:github"},
+        # "extractor_args": {
+        #     "youtube": {
+        #         "player_client": ["web", "android", "ios", "mweb"], # fallbacks if web fails
+        #     }
+        # },
     }
 
     for ytbr, vids in video_ids.items():
@@ -159,7 +163,7 @@ def download_videos(video_ids: VideoIdMap, output_dir: str) -> None:
                 ydl.download(urls_to_download)
 
             print("Batch finished. Resting to cool down...")
-            time.sleep(random.randint(30, 60))
+            time.sleep(random.randint(5, 10))
         else:
             print(f"All videos for {ytbr} are up to date.")
 

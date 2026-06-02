@@ -217,8 +217,28 @@ def transcribe_with_speakers(
         diarize_model = DiarizationPipeline(token=hf_token, device=device)
 
     if diarize_model is not None:
-        diarize_segments = diarize_model(audio, max_speakers=max_speakers)
-        result = whisperx.assign_word_speakers(diarize_segments, result)
+        # garbage collect and empty cuda cache before diarization
+        if device == "cuda":
+            gc.collect()
+            torch.cuda.empty_cache()
+        try:
+            diarize_segments = diarize_model(audio, max_speakers=max_speakers)
+            result = whisperx.assign_word_speakers(diarize_segments, result)
+        except Exception as e:
+            if "out of memory" in str(e).lower() and device == "cuda":
+                print("  ⚠️ diarization failed on cuda due to oom. retrying on cpu (might take a while)...")
+                gc.collect()
+                torch.cuda.empty_cache()
+                try:
+                    # load diarization pipeline on cpu to avoid cuda oom
+                    cpu_diarize_model = DiarizationPipeline(token=hf_token, device="cpu")
+                    diarize_segments = cpu_diarize_model(audio, max_speakers=max_speakers)
+                    result = whisperx.assign_word_speakers(diarize_segments, result)
+                except Exception as cpu_e:
+                    print(f"  ❌ diarization failed on cpu as well: {cpu_e}")
+                    raise cpu_e
+            else:
+                raise e
 
     if model_cache is None:
         del model, diarize_model
